@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { Player } = require('discord-player');
-const { YoutubeiExtractor } = require('discord-player-youtubei');
+const { DisTube } = require('distube');
+const { YtDlpPlugin } = require('@distube/yt-dlp');
 const express = require('express');
 
 const app = express();
@@ -31,17 +31,21 @@ const client = new Client({
     ]
 });
 
-const player = new Player(client);
-
-player.extractors.register(YoutubeiExtractor, {});
-
-player.events.on('playerStart', (queue, track) => {
-    queue.metadata.channel.send(`🎵 **Şimdi Çalıyor:** ${track.title}`);
+const distube = new DisTube(client, {
+    plugins: [new YtDlpPlugin()],
+    emitNewSongOnly: true,
+    leaveOnEmpty: true,
+    leaveOnFinish: false,
+    leaveOnStop: true
 });
 
-player.events.on('error', (queue, error) => {
-    console.error('❌ Player hatası:', error);
-    queue.metadata.channel.send('❌ Müzik çalarken bir hata oluştu!');
+distube.on('playSong', (queue, song) => {
+    queue.textChannel.send(`🎵 **Şimdi Çalıyor:** ${song.name} - \`${song.formattedDuration}\``);
+});
+
+distube.on('error', (channel, error) => {
+    console.error('❌ DisTube hatası:', error);
+    if (channel) channel.send('❌ Bir hata oluştu!');
 });
 
 client.once('ready', () => {
@@ -67,87 +71,69 @@ client.on('messageCreate', async message => {
         const query = args.join(' ');
 
         try {
-            const searchResult = await player.search(query, {
-                requestedBy: message.author
+            await distube.play(message.member.voice.channel, query, {
+                member: message.member,
+                textChannel: message.channel,
+                message
             });
-
-            if (!searchResult || !searchResult.tracks.length) {
-                return message.reply('❌ Hiçbir sonuç bulunamadı!');
-            }
-
-            const queue = player.nodes.create(message.guild, {
-                metadata: {
-                    channel: message.channel
-                },
-                leaveOnEmptyCooldown: 60000,
-                leaveOnEmpty: true,
-                leaveOnEnd: false
-            });
-
-            try {
-                if (!queue.connection) await queue.connect(message.member.voice.channel);
-            } catch {
-                queue.delete();
-                return message.reply('❌ Ses kanalına bağlanılamadı!');
-            }
-
-            searchResult.playlist ? queue.addTrack(searchResult.tracks) : queue.addTrack(searchResult.tracks[0]);
-
-            if (!queue.isPlaying()) await queue.node.play();
-
-            message.reply(searchResult.playlist 
-                ? `✅ **${searchResult.tracks.length}** şarkı sıraya eklendi!`
-                : `✅ **${searchResult.tracks[0].title}** sıraya eklendi!`
-            );
+            message.reply('🔍 Aranıyor ve çalınıyor...');
         } catch (error) {
             console.error(error);
-            message.reply('❌ Bir hata oluştu!');
+            message.reply('❌ Şarkı çalarken bir hata oluştu!');
         }
     }
 
     if (command === 'skip' || command === 's') {
-        const queue = player.nodes.get(message.guild);
-        if (!queue || !queue.isPlaying()) {
-            return message.reply('❌ Çalan bir şarkı yok!');
+        const queue = distube.getQueue(message);
+        if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
+        
+        try {
+            await distube.skip(message);
+            message.reply('⏭️ Şarkı atlandı!');
+        } catch {
+            message.reply('❌ Atlanacak şarkı yok!');
         }
-        queue.node.skip();
-        message.reply('⏭️ Şarkı atlandı!');
     }
 
     if (command === 'stop') {
-        const queue = player.nodes.get(message.guild);
+        const queue = distube.getQueue(message);
         if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
-        queue.delete();
+        
+        await distube.stop(message);
         message.reply('⏹️ Müzik durduruldu!');
     }
 
     if (command === 'queue' || command === 'q') {
-        const queue = player.nodes.get(message.guild);
-        if (!queue || !queue.isPlaying()) {
-            return message.reply('❌ Kuyruk boş!');
-        }
+        const queue = distube.getQueue(message);
+        if (!queue) return message.reply('❌ Kuyruk boş!');
 
-        const currentTrack = queue.currentTrack;
-        const tracks = queue.tracks.toArray().slice(0, 10);
+        const currentSong = queue.songs[0];
+        const queueSongs = queue.songs.slice(1, 11);
 
-        let queueMessage = `**📋 Müzik Kuyruğu:**\n\n🎵 **Şimdi Çalıyor:** ${currentTrack.title}\n\n`;
+        let queueMessage = `**📋 Müzik Kuyruğu:**\n\n🎵 **Şimdi Çalıyor:** ${currentSong.name}\n\n`;
         
-        tracks.forEach((track, i) => {
-            queueMessage += `${i + 1}. ${track.title}\n`;
+        queueSongs.forEach((song, i) => {
+            queueMessage += `${i + 1}. ${song.name}\n`;
         });
 
-        if (queue.tracks.size > 10) {
-            queueMessage += `\n*...ve ${queue.tracks.size - 10} şarkı daha*`;
+        if (queue.songs.length > 11) {
+            queueMessage += `\n*...ve ${queue.songs.length - 11} şarkı daha*`;
         }
 
         message.reply(queueMessage);
     }
 
     if (command === 'pause') {
-        const queue = player.nodes.get(message.guild);
+        const queue = distube.getQueue(message);
         if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
-        queue.node.setPaused(!queue.node.isPaused());
-        message.reply(queue.node.isPaused() ? '⏸️ Duraklatıldı' : '▶️ Devam ediyor');
+        
+        if (queue.paused) {
+            distube.resume(message);
+            message.reply('▶️ Devam ediyor');
+        } else {
+            distube.pause(message);
+            message.reply('⏸️ Duraklatıldı');
+        }
     }
 
     if (command === 'help') {
