@@ -30,11 +30,7 @@ const client = new Client({
     ]
 });
 
-const distube = new DisTube(client, {
-    emitNewSongOnly: true,
-    leaveOnEmpty: true,
-    leaveOnFinish: false,
-    leaveOnStop: true
+const distube = new DisTube(client);
 });
 
 distube.on('playSong', (queue, song) => {
