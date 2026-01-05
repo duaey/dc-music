@@ -1,6 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
 const express = require('express');
 
 const app = express();
@@ -32,7 +31,6 @@ const client = new Client({
 });
 
 const distube = new DisTube(client, {
-    plugins: [new YtDlpPlugin()],
     emitNewSongOnly: true,
     leaveOnEmpty: true,
     leaveOnFinish: false,
