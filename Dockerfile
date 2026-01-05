@@ -1,20 +1,10 @@
-FROM node:18-slim
-
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:18
 
 WORKDIR /app
 
 COPY package*.json ./
 
-RUN rm -rf node_modules package-lock.json
-
-RUN npm cache clean --force
-
-RUN npm install --legacy-peer-deps
+RUN npm install
 
 COPY . .
 
