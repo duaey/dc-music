@@ -95,10 +95,21 @@ async function playSong(guildId) {
     }
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`✅ Bot hazır! ${client.user.tag} olarak giriş yapıldı`);
     console.log(`📊 ${client.guilds.cache.size} sunucuda aktif`);
-    console.log(`🎧 SoundCloud modu aktif`);
+    
+    // SoundCloud client_id ayarla
+    try {
+        await play.setToken({
+            soundcloud: {
+                client_id: await play.getFreeClientID()
+            }
+        });
+        console.log(`🎧 SoundCloud modu aktif`);
+    } catch (error) {
+        console.error('❌ SoundCloud token hatası:', error.message);
+    }
 });
 
 client.on('messageCreate', async message => {
