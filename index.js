@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Discord Müzik Botu çalışıyor! 🎵');
+    res.send('Discord Müzik Botu çalışıyor! 🎵 (SoundCloud)');
 });
 
 app.get('/health', (req, res) => {
@@ -73,14 +73,15 @@ async function playSong(guildId) {
 
         if (queue.textChannel) {
             const embed = new EmbedBuilder()
-                .setColor(0x00FF00)
+                .setColor(0xFF5500)
                 .setTitle('🎵 Şimdi Çalıyor')
                 .setDescription(`**${song.title}**`)
                 .addFields(
-                    { name: 'Süre', value: song.duration, inline: true },
+                    { name: 'Süre', value: song.duration || 'Bilinmiyor', inline: true },
                     { name: 'İsteyen', value: song.requestedBy, inline: true }
                 )
-                .setThumbnail(song.thumbnail);
+                .setThumbnail(song.thumbnail)
+                .setFooter({ text: '🎧 SoundCloud' });
             
             queue.textChannel.send({ embeds: [embed] });
         }
@@ -97,6 +98,7 @@ async function playSong(guildId) {
 client.once('ready', () => {
     console.log(`✅ Bot hazır! ${client.user.tag} olarak giriş yapıldı`);
     console.log(`📊 ${client.guilds.cache.size} sunucuda aktif`);
+    console.log(`🎧 SoundCloud modu aktif`);
 });
 
 client.on('messageCreate', async message => {
@@ -105,14 +107,14 @@ client.on('messageCreate', async message => {
     const args = message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // PLAY komutu
+    // PLAY komutu - SoundCloud
     if (command === 'play' || command === 'p') {
         if (!message.member.voice.channel) {
             return message.reply('❌ Önce bir ses kanalına katılmalısın!');
         }
 
         if (!args.length) {
-            return message.reply('❌ Lütfen bir YouTube linki veya şarkı adı gir!');
+            return message.reply('❌ Lütfen bir şarkı adı gir!\nÖrnek: `!play despacito`');
         }
 
         const query = args.join(' ');
@@ -120,74 +122,31 @@ client.on('messageCreate', async message => {
         queue.textChannel = message.channel;
 
         try {
-            // Arama yap
             let songInfo;
             
-            if (play.yt_validate(query) === 'video') {
-                // Direkt YouTube linki
-                const info = await play.video_info(query);
+            // SoundCloud linki mi kontrol et
+            if (query.includes('soundcloud.com')) {
+                const scInfo = await play.soundcloud(query);
                 songInfo = {
-                    url: info.video_details.url,
-                    title: info.video_details.title,
-                    duration: info.video_details.durationRaw,
-                    thumbnail: info.video_details.thumbnails[0]?.url || '',
+                    url: scInfo.url,
+                    title: scInfo.name,
+                    duration: formatDuration(scInfo.durationInMs),
+                    thumbnail: scInfo.thumbnail || 'https://soundcloud.com/pwa-icon-192.png',
                     requestedBy: message.author.tag
                 };
-            } else if (play.yt_validate(query) === 'playlist') {
-                // Playlist
-                const playlist = await play.playlist_info(query, { incomplete: true });
-                const videos = await playlist.all_videos();
-                
-                for (const video of videos) {
-                    queue.songs.push({
-                        url: video.url,
-                        title: video.title,
-                        duration: video.durationRaw,
-                        thumbnail: video.thumbnails[0]?.url || '',
-                        requestedBy: message.author.tag
-                    });
-                }
-                
-                message.reply(`✅ **${playlist.title}** playlist'i eklendi! (${videos.length} şarkı)`);
-                
-                if (!queue.playing) {
-                    // Bağlantı kur
-                    if (!queue.connection) {
-                        queue.connection = joinVoiceChannel({
-                            channelId: message.member.voice.channel.id,
-                            guildId: message.guild.id,
-                            adapterCreator: message.guild.voiceAdapterCreator
-                        });
-
-                        queue.player = createAudioPlayer();
-                        queue.connection.subscribe(queue.player);
-
-                        queue.player.on(AudioPlayerStatus.Idle, () => {
-                            queue.songs.shift();
-                            playSong(message.guild.id);
-                        });
-
-                        queue.player.on('error', error => {
-                            console.error('Player hatası:', error);
-                            queue.songs.shift();
-                            playSong(message.guild.id);
-                        });
-                    }
-                    
-                    playSong(message.guild.id);
-                }
-                return;
             } else {
-                // Arama yap
-                const searched = await play.search(query, { limit: 1 });
+                // SoundCloud'da ara
+                const searched = await play.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
+                
                 if (searched.length === 0) {
-                    return message.reply('❌ Hiçbir sonuç bulunamadı!');
+                    return message.reply('❌ SoundCloud\'da sonuç bulunamadı!');
                 }
+                
                 songInfo = {
                     url: searched[0].url,
-                    title: searched[0].title,
-                    duration: searched[0].durationRaw,
-                    thumbnail: searched[0].thumbnails[0]?.url || '',
+                    title: searched[0].name,
+                    duration: formatDuration(searched[0].durationInMs),
+                    thumbnail: searched[0].thumbnail || 'https://soundcloud.com/pwa-icon-192.png',
                     requestedBy: message.author.tag
                 };
             }
@@ -264,7 +223,7 @@ client.on('messageCreate', async message => {
         if (queue.connection) queue.connection.destroy();
         queues.delete(message.guild.id);
         
-        message.reply('⏹️ Müzik durduruldu ve kuyruk temizlendi!');
+        message.reply('⏹️ Müzik durduruldu!');
     }
 
     // QUEUE komutu
@@ -291,9 +250,10 @@ client.on('messageCreate', async message => {
         }
 
         const embed = new EmbedBuilder()
-            .setColor(0x0099FF)
+            .setColor(0xFF5500)
             .setTitle('📋 Müzik Kuyruğu')
-            .setDescription(description);
+            .setDescription(description)
+            .setFooter({ text: '🎧 SoundCloud' });
 
         message.reply({ embeds: [embed] });
     }
@@ -329,14 +289,15 @@ client.on('messageCreate', async message => {
 
         const song = queue.songs[0];
         const embed = new EmbedBuilder()
-            .setColor(0x00FF00)
+            .setColor(0xFF5500)
             .setTitle('🎵 Şimdi Çalıyor')
             .setDescription(`**${song.title}**`)
             .addFields(
                 { name: 'Süre', value: song.duration, inline: true },
                 { name: 'İsteyen', value: song.requestedBy, inline: true }
             )
-            .setThumbnail(song.thumbnail);
+            .setThumbnail(song.thumbnail)
+            .setFooter({ text: '🎧 SoundCloud' });
 
         message.reply({ embeds: [embed] });
     }
@@ -344,11 +305,11 @@ client.on('messageCreate', async message => {
     // HELP komutu
     if (command === 'help') {
         const embed = new EmbedBuilder()
-            .setColor(0x5865F2)
+            .setColor(0xFF5500)
             .setTitle('🎵 Müzik Botu Komutları')
-            .setDescription('Aşağıdaki komutları kullanabilirsin:')
+            .setDescription('SoundCloud\'dan müzik çalar!')
             .addFields(
-                { name: '!play <şarkı>', value: 'YouTube\'dan müzik çal', inline: true },
+                { name: '!play <şarkı>', value: 'SoundCloud\'dan müzik çal', inline: true },
                 { name: '!skip', value: 'Şarkıyı atla', inline: true },
                 { name: '!stop', value: 'Müziği durdur', inline: true },
                 { name: '!queue', value: 'Sırayı göster', inline: true },
@@ -356,11 +317,24 @@ client.on('messageCreate', async message => {
                 { name: '!resume', value: 'Devam et', inline: true },
                 { name: '!nowplaying', value: 'Çalan şarkıyı göster', inline: true }
             )
-            .setFooter({ text: 'Örnek: !play never gonna give you up' });
+            .setFooter({ text: 'Örnek: !play despacito' });
 
         message.reply({ embeds: [embed] });
     }
 });
+
+// Süre formatlama
+function formatDuration(ms) {
+    if (!ms) return 'Bilinmiyor';
+    const seconds = Math.floor((ms / 1000) % 60);
+    const minutes = Math.floor((ms / (1000 * 60)) % 60);
+    const hours = Math.floor(ms / (1000 * 60 * 60));
+    
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
 
 const token = process.env.DISCORD_TOKEN;
 
