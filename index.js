@@ -30,7 +30,13 @@ const client = new Client({
     ]
 });
 
-const distube = new DisTube(client);
+const { YouTubePlugin } = require('@distube/youtube');
+
+const distube = new DisTube(client, {
+    plugins: [new YouTubePlugin()]
+});
+
+
 distube.on('playSong', (queue, song) => {
     queue.textChannel.send(`🎵 **Şimdi Çalıyor:** ${song.name} - \`${song.formattedDuration}\``);
 });
