@@ -41,9 +41,11 @@ distube.on('playSong', (queue, song) => {
     queue.textChannel.send(`🎵 **Şimdi Çalıyor:** ${song.name} - \`${song.formattedDuration}\``);
 });
 
-distube.on('error', (channel, error) => {
+distube.on('error', (queue, error) => {
     console.error('❌ DisTube hatası:', error);
-    if (channel) channel.send('❌ Bir hata oluştu!');
+    if (queue && queue.textChannel) {
+        queue.textChannel.send('❌ Bir hata oluştu!');
+    }
 });
 
 client.once('ready', () => {
