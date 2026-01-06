@@ -31,8 +31,6 @@ const client = new Client({
 });
 
 const distube = new DisTube(client);
-});
-
 distube.on('playSong', (queue, song) => {
     queue.textChannel.send(`🎵 **Şimdi Çalıyor:** ${song.name} - \`${song.formattedDuration}\``);
 });
