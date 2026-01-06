@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { DisTube } = require('distube');
+const { Manager } = require('erela.js');
 const express = require('express');
 
 const app = express();
@@ -30,28 +30,46 @@ const client = new Client({
     ]
 });
 
-const { YouTubePlugin } = require('@distube/youtube');
-
-const distube = new DisTube(client, {
-    plugins: [new YouTubePlugin()]
-});
-
-
-distube.on('playSong', (queue, song) => {
-    queue.textChannel.send(`🎵 **Şimdi Çalıyor:** ${song.name} - \`${song.formattedDuration}\``);
-});
-
-distube.on('error', (queue, error) => {
-    console.error('❌ DisTube hatası:', error);
-    if (queue && queue.textChannel) {
-        queue.textChannel.send('❌ Bir hata oluştu!');
+const manager = new Manager({
+    nodes: [
+        {
+            host: 'lava-v3.ajieblogs.eu.org',
+            port: 80,
+            password: 'https://dsc.gg/ajidevserver'
+        }
+    ],
+    send: (id, payload) => {
+        const guild = client.guilds.cache.get(id);
+        if (guild) guild.shard.send(payload);
     }
+});
+
+manager.on('nodeConnect', node => {
+    console.log(`✅ Lavalink node bağlandı: ${node.options.host}`);
+});
+
+manager.on('nodeError', (node, error) => {
+    console.error(`❌ Lavalink hatası [${node.options.host}]:`, error.message);
+});
+
+manager.on('trackStart', (player, track) => {
+    const channel = client.channels.cache.get(player.textChannel);
+    channel.send(`🎵 **Şimdi Çalıyor:** ${track.title}`);
+});
+
+manager.on('queueEnd', player => {
+    const channel = client.channels.cache.get(player.textChannel);
+    channel.send('✅ Kuyruk bitti!');
+    player.destroy();
 });
 
 client.once('ready', () => {
     console.log(`✅ Bot hazır! ${client.user.tag} olarak giriş yapıldı`);
     console.log(`📊 ${client.guilds.cache.size} sunucuda aktif`);
+    manager.init(client.user.id);
 });
+
+client.on('raw', d => manager.updateVoiceState(d));
 
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.content.startsWith('!')) return;
@@ -65,75 +83,109 @@ client.on('messageCreate', async message => {
         }
 
         if (!args.length) {
-            return message.reply('❌ Lütfen bir YouTube linki veya şarkı adı gir!\n**Örnek:** `!play never gonna give you up`');
+            return message.reply('❌ Lütfen bir YouTube linki veya şarkı adı gir!');
         }
 
         const query = args.join(' ');
 
-        try {
-            await distube.play(message.member.voice.channel, query, {
-                member: message.member,
-                textChannel: message.channel,
-                message
+        let player = manager.players.get(message.guild.id);
+
+        if (!player) {
+            player = manager.create({
+                guild: message.guild.id,
+                voiceChannel: message.member.voice.channel.id,
+                textChannel: message.channel.id,
+                selfDeafen: true
             });
-            message.reply('🔍 Aranıyor ve çalınıyor...');
-        } catch (error) {
-            console.error(error);
-            message.reply('❌ Şarkı çalarken bir hata oluştu!');
+        }
+
+        if (player.state !== 'CONNECTED') player.connect();
+
+        const res = await manager.search(query, message.author);
+
+        if (res.loadType === 'LOAD_FAILED') {
+            return message.reply('❌ Şarkı yüklenemedi!');
+        }
+
+        if (res.loadType === 'NO_MATCHES') {
+            return message.reply('❌ Hiçbir sonuç bulunamadı!');
+        }
+
+        if (res.loadType === 'PLAYLIST_LOADED') {
+            player.queue.add(res.tracks);
+            message.reply(`✅ **${res.playlist.name}** playlist'i eklendi! (${res.tracks.length} şarkı)`);
+        } else {
+            player.queue.add(res.tracks[0]);
+            message.reply(`✅ **${res.tracks[0].title}** sıraya eklendi!`);
+        }
+
+        if (!player.playing && !player.paused && !player.queue.size) {
+            player.play();
+        } else if (!player.playing && !player.paused) {
+            player.play();
         }
     }
 
     if (command === 'skip' || command === 's') {
-        const queue = distube.getQueue(message);
-        if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
+        const player = manager.players.get(message.guild.id);
+        if (!player) return message.reply('❌ Çalan bir şarkı yok!');
         
-        try {
-            await distube.skip(message);
-            message.reply('⏭️ Şarkı atlandı!');
-        } catch {
-            message.reply('❌ Atlanacak şarkı yok!');
-        }
+        player.stop();
+        message.reply('⏭️ Şarkı atlandı!');
     }
 
     if (command === 'stop') {
-        const queue = distube.getQueue(message);
-        if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
+        const player = manager.players.get(message.guild.id);
+        if (!player) return message.reply('❌ Çalan bir şarkı yok!');
         
-        await distube.stop(message);
+        player.destroy();
         message.reply('⏹️ Müzik durduruldu!');
     }
 
     if (command === 'queue' || command === 'q') {
-        const queue = distube.getQueue(message);
-        if (!queue) return message.reply('❌ Kuyruk boş!');
+        const player = manager.players.get(message.guild.id);
+        if (!player) return message.reply('❌ Kuyruk boş!');
 
-        const currentSong = queue.songs[0];
-        const queueSongs = queue.songs.slice(1, 11);
+        const queue = player.queue;
+        const current = queue.current;
+        const tracks = queue.slice(0, 10);
 
-        let queueMessage = `**📋 Müzik Kuyruğu:**\n\n🎵 **Şimdi Çalıyor:** ${currentSong.name}\n\n`;
+        let queueMessage = `**📋 Müzik Kuyruğu:**\n\n🎵 **Şimdi Çalıyor:** ${current.title}\n\n`;
         
-        queueSongs.forEach((song, i) => {
-            queueMessage += `${i + 1}. ${song.name}\n`;
+        tracks.forEach((track, i) => {
+            queueMessage += `${i + 1}. ${track.title}\n`;
         });
 
-        if (queue.songs.length > 11) {
-            queueMessage += `\n*...ve ${queue.songs.length - 11} şarkı daha*`;
+        if (queue.length > 10) {
+            queueMessage += `\n*...ve ${queue.length - 10} şarkı daha*`;
         }
 
         message.reply(queueMessage);
     }
 
     if (command === 'pause') {
-        const queue = distube.getQueue(message);
-        if (!queue) return message.reply('❌ Çalan bir şarkı yok!');
+        const player = manager.players.get(message.guild.id);
+        if (!player) return message.reply('❌ Çalan bir şarkı yok!');
         
-        if (queue.paused) {
-            distube.resume(message);
-            message.reply('▶️ Devam ediyor');
-        } else {
-            distube.pause(message);
-            message.reply('⏸️ Duraklatıldı');
+        player.pause(!player.paused);
+        message.reply(player.paused ? '⏸️ Duraklatıldı' : '▶️ Devam ediyor');
+    }
+
+    if (command === 'volume' || command === 'vol') {
+        const player = manager.players.get(message.guild.id);
+        if (!player) return message.reply('❌ Çalan bir şarkı yok!');
+
+        if (!args.length) {
+            return message.reply(`🔊 Ses seviyesi: **${player.volume}%**`);
         }
+
+        const volume = Number(args[0]);
+        if (isNaN(volume) || volume < 0 || volume > 100) {
+            return message.reply('❌ 0-100 arası bir değer gir!');
+        }
+
+        player.setVolume(volume);
+        message.reply(`🔊 Ses seviyesi: **${volume}%**`);
     }
 
     if (command === 'help') {
@@ -145,6 +197,7 @@ client.on('messageCreate', async message => {
 \`!stop\` - Müziği durdur
 \`!queue\` - Sırayı göster
 \`!pause\` - Duraklat/Devam et
+\`!volume <0-100>\` - Ses seviyesi
 \`!help\` - Bu mesajı göster
 
 **Örnek:**
