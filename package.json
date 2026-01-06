@@ -1,15 +1,18 @@
 {
   "name": "discord-music-bot",
-  "version": "4.0.0",
-  "description": "Discord müzik botu - Lavalink",
+  "version": "5.0.0",
+  "description": "Discord müzik botu - play-dl",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.18.0",
     "discord.js": "^14.16.3",
-    "erela.js": "^2.4.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "libsodium-wrappers": "^0.7.15",
+    "play-dl": "^1.9.7",
+    "ffmpeg-static": "^5.2.0"
   },
   "engines": {
     "node": "20.x"
